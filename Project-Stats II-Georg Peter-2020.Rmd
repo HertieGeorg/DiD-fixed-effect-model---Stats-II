@@ -1,0 +1,901 @@
+---
+title: "Project: Statistical Modeling & Causal Inference, Hertie School" 
+output: html_document
+---
+
+
+## **Georg Peter (193972), May 25, 2020**
+***
+
+```{r, include = FALSE}
+
+#Importing necessary packages 
+
+install.packages("foreign") 
+install.packages("dplyr") 
+install.packages("tidyr") 
+install.packages("stargazer") 
+install.packages("MatchIt") 
+install.packages("tidyverse") 
+install.packages("haven") 
+install.packages("lmtest") 
+install.packages("sandwich") 
+ 
+library(foreign)
+library(dplyr) # to wrangle our data
+library(tidyr) # to wrangle our data - gather()
+library(stargazer) # for formatting your model output
+library(MatchIt) #for machting/ propensity scores
+library(tidyverse)
+library(haven) 
+library(lmtest) # to use function coeftest
+library(sandwich) # to use function vcovHC
+
+
+#Loading the Data
+rm(list = ls())
+data_turnout_raw <- read_dta(file = "Rottinghaus_Cortina_Vote Centers and Turnout by Election Type in Texas_Data.dta")
+data_turnout_PA_raw <- read_dta(file = "Rottinghaus_Cortina_Vote Centers and Turnout by Election Type in Texas_Parallel Assumption Data.dta")
+
+```
+
+<br> <br>
+<div style="color:blue">
+Replicating Table 1: 
+</div>
+
+Model: <br>
+Difference-in-difference (DD) fixed effect model with clustered standard errors at the county level based on panel data covering presidential elections (2012-2016), midterm/gubernatorial elections (2010-2018), and constitutional elections (2009-2017) in Texas.
+
+Method: <br>
+* Filter data for election type and relevant years, change year column name accordingly <br>
+* Recode year variable into dummy <br>
+* Run linear model (using plm() would not return Constants, therefore lm() is used) with "turnout" as outcome variable and "votecenter * year_p" as DD-estimator (including "county" to be ablte to cluster standard errors on a county-level) <br>
+* Using coeftest() to cluster the standart errors on county-level
+
+
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+#Code: Reproducing Table 1 
+
+#Column 1: 
+data_turnout_presidential <- data_turnout_raw  %>%   filter(presidential == 1)    #filter for presidential elections
+
+data_turnout_presidential$year <- ifelse(data_turnout_presidential$year == 2016, 1, 0) #change year column into dummy 
+
+data_turnout_presidential <- data_turnout_presidential %>% dplyr::rename( year_p = year) #rename year column 
+
+cache_1  <- lm(turnout ~ votecenter + year_p + county + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_presidential)
+
+reg_P_1 <- coeftest(cache_1, vcov=vcovHC(cache_1, type="HC4", cluster= "group"))  
+
+
+#Column 2: Midterm
+data_turnout_midterm <- data_turnout_raw %>%      #filter just for midterm elections
+  filter(midterm == 1) %>% filter(year != 2014)   #drop all observation from year 2014
+
+data_turnout_midterm$year <- ifelse(data_turnout_midterm$year == 2018, 1, 0) #change year column into dummy 
+
+data_turnout_midterm <- data_turnout_midterm%>% dplyr::rename(year_m = year) #rename year column 
+
+cache_2  <- lm(turnout ~ votecenter + year_m + county + votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_midterm)
+
+reg_M_1 <- coeftest(cache_2, vcov=vcovHC(cache_2, type="HC4", cluster= "group"))  
+
+
+#Column 3: Constitutional 
+data_turnout_const <- data_turnout_raw %>% filter(constitutional == 1) %>%  #filter just for constitutional elections 
+  filter(year==2017 | year==2009)   #drop all observation execpt  years 20017 and 2009
+
+data_turnout_const$year <- ifelse(data_turnout_const$year == 2017, 1, 0) #change year column into dummy 
+
+data_turnout_const <- data_turnout_const %>% dplyr::rename(year_c = year) #rename year column 
+
+cache_3  <- lm(turnout ~ votecenter + year_c + county + votecenter*year_c + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_const)
+
+reg_C_1 <- coeftest(cache_3, vcov=vcovHC(cache_3, type="HC4", cluster= "group")) 
+
+
+#Creating a stargazer table that includse all 3 linear models
+own_order_1 = c( "year_p", "votecenter:year_p", "year_m", "votecenter:year_m", "year_c", "votecenter:year_c")  
+
+own_labels_1 =  c( "Time(P) (1=2016/0=2012)", "Time(P)*Vote center", "Time(M) (1=2018/0=2010)", "Time(M)*Vote center", "Time(C) (1=2017/0=2009)", "Time(C)*Vote center", "Vote center (1=yes/0=no)", "Median income", "Bachelor’s degree or higher", "Total population") 
+
+stargazer(reg_P_1, reg_M_1, reg_C_1, title="Table 1. Differential impact of vote center on elections.",
+          omit.stat=c("f", "ser"), 
+          style = "default", 
+          type = "html",
+          out = "Table_1.html",
+          omit= c("county"),  
+          order=own_order_1, 
+          covariate.labels = own_labels_1,  
+          model.numbers = FALSE,
+          column.labels = c("Presidential <br> 2012-2016", "Midterm <br> 2010-2018", 
+                            "Constitutional <br> 2009-2017"), 
+          notes=c("Standard errors given in parentheses.", 
+                  "Population scaled to 1,000,000 and income scaled to 10,000."))
+
+```
+<br> <br>
+<div style="color:blue">
+Findings:
+</div>
+See summary of paper findings in the introduction.
+The estimates of the Constants take slightly different values compared to the original paper, while they are comparable regarding the statistical significance. 
+
+<br> 
+
+<div style="color:blue">
+Replicating Table 2: 
+</div>
+
+Model: Difference-in-difference (DD) fixed effect model with clustered standard errors at the county level based on panel data covering constitutional elections (2009-2017) in Texas. Different linear models for three different time spans: 2009-2011, 2011-2017, 2015-2017.
+
+Method: <br> 
+* Filter data for constitutional and relevant years, change year column name accordingly <br> 
+* Recode year variable into dummy <br> 
+* Run linear model (using plm() would not return Constants, therefore lm() is used) with "turnout" as outcome variable and "votecenter * year_p" as DD-estimator (including "county" to be ablte to cluster standard errors on a county-level) <br> 
+* Using coeftest() to cluster the standart errors on county-level 
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+#Replicate Table 2:
+
+#Column 1: 2009-2011
+data_turnout_const0911 <- data_turnout_raw %>%  
+  filter(constitutional == 1) %>%        #filter for only constitutial elections
+  filter(year == 2009 | year == 2011)   #drop all observation expect years 2009 and 2011
+data_turnout_const0911$year <- ifelse(data_turnout_const0911$year == 2011, 1, 0) #change year column into dummy 
+data_turnout_const0911 <- data_turnout_const0911 %>% dplyr::rename(year_C1 = year) #rename year column 
+cache_C1 <- lm(turnout ~ votecenter + year_C1 + votecenter*year_C1 + county + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_const0911)
+
+reg_C_2.1<- coeftest(cache_C1, vcov=vcovHC(cache_C1, type="HC4", cluster= "group"))  
+
+
+#Column 2: 2011-2017
+data_turnout_const1117 <- data_turnout_raw %>%  
+  filter(constitutional == 1) %>%        #filter for only constitutial elections
+  filter(year == 2011 | year == 2017)   #drop all observation expect years 2011 and 2017
+data_turnout_const1117$year <- ifelse(data_turnout_const1117$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_const1117 <- data_turnout_const1117 %>% dplyr::rename( year_C2 = year) #rename year column 
+cache_C2 <- lm(turnout ~ votecenter + year_C2 + votecenter*year_C2 + county + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_const1117)
+
+reg_C_2.2<- coeftest(cache_C2, vcov=vcovHC(cache_C2, type="HC4", cluster= "group"))  
+
+
+#Column 3: 2015-2017
+data_turnout_const1517 <- data_turnout_raw %>%  
+  filter(constitutional == 1) %>%        #filter for only constitutial elections
+  filter(year == 2015 | year == 2017)   #drop all observation expect years 2015 and 2017
+data_turnout_const1517$year <- ifelse(data_turnout_const1517$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_const1517 <- data_turnout_const1517 %>% dplyr::rename( year_C3 = year) #rename year column 
+cache_C3 <- lm(turnout ~ votecenter + year_C3 + votecenter*year_C3 + county + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_const1517)
+
+reg_C_2.3 <- coeftest(cache_C3, vcov=vcovHC(cache_C3, type="HC4", cluster= "group"))  
+
+
+#Creating a stargazer table that includse all 3 linear models
+own_order_2 = c("year_C1", "votecenter:year_C1", "year_C2", "votecenter:year_C2", "year_C3", "votecenter:year_C3")
+
+own_labels_2 =  c( "Time(C1) (1=2011/0=2009)", "Time(C1)*Vote center", "Time(C2) (1=2017/0=2011)", "Time(C2)*Vote center", "Time(C3) (1=2017/0=2015)", "Time(C3)*Vote center", "Vote center (1=yes/0=no)", "Median income", "Bachelor’s degree or higher", "Total population") 
+
+
+stargazer(reg_C_2.1, reg_C_2.2, reg_C_2.3, title="Table 2. Different impact of vote centers.",  
+          type = "html",
+          out = "Table_2.html",
+          omit.stat=c("f", "ser"), 
+          style = "default", 
+          omit= c("county"), 
+          model.numbers = FALSE,
+          column.labels = c("Constitutional <br> 2009-2011", "Constitutional <br> 2011-2017", 
+                            "Constitutional <br> 2015-2017"),
+          order=own_order_2,
+          covariate.labels = own_labels_2,  
+          notes=c("Standard errors given in parentheses.",
+          "Population scaled to 1,000,000 and income scaled to 10,000."))
+     
+
+```
+<br> <br>
+<div style="color:blue">
+Findings:
+</div>
+See summary of paper findings in the introduction.
+
+<br> 
+
+<div style="color:blue">
+Replicating Table 3: 
+</div>
+
+Model: Linear Regression Difference-in-difference (DD) fixed effect model with probability weights extracted from the propensity score matching process based on panel data covering presidential elections (2012-2016), midterm/gubernatorial elections (2010-2018), and constitutional elections (2009-2017) in Texas.
+
+Method: <br> 
+* Use already filtered (election, year) datasets from Table 1 <br> 
+* Create new dataset with only relevant variables and omit missing values  <br> 
+* Use propensity score matching (matching on votecenter) to create new, machted dataset: <br> 
+        matching method = K-nearest neighbors algorithm <br> 
+        distance measurment = Probit model <br> 
+* Run linear model (DD fixed effect model) on matched data (doubly robust method for causal inference) <br> 
+
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+#Reproducting Table 3: 
+
+
+# Column 1: Presidential 
+match_data1 <- data_turnout_presidential %>%   #omitting missing values
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_p) %>% 
+  na.omit() 
+nearest_match1 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,    # perform nearest match
+                       method = "nearest",  distance =  "probit",
+                       data = match_data1, replace =T)
+data_exact_match1 <- match.data(nearest_match1)   #grab matched data
+
+reg_Pscore_Presid   <- lm(turnout ~ votecenter + year_p + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match1)
+
+
+# Column 2: Midterm 
+match_data2 <- data_turnout_midterm %>%    
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_m) %>% 
+  na.omit()
+nearest_match2 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   # perform nearest match
+                       method = "nearest", distance =  "probit", 
+                       data = match_data2, replace =T)
+data_exact_match2 <- match.data(nearest_match2)  #grab matched data
+
+reg_Pscore_Midterm   <- lm(turnout ~ votecenter + year_m + votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match2)
+
+
+# Column 3: Constitutional
+match_data3 <- data_turnout_const %>%     #omitting missing values
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_c) %>% 
+  na.omit()
+nearest_match3 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest",   distance =  "probit",
+                       data = match_data3, replace =T)
+data_exact_match3 <- match.data(nearest_match3)  #grab matched data
+
+reg_Pscore_Const   <- lm(turnout ~ votecenter + year_c + votecenter*year_c + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match3)
+
+
+#Creating a stargazer table that includse all linear models
+stargazer(reg_Pscore_Presid , reg_Pscore_Midterm, reg_Pscore_Const, 
+          title="Table 3. Robustness check with propensity score matching.",       
+          type = "html",
+          out = "Table_3.html",
+          model.numbers = FALSE,
+          omit.stat=c("f", "ser"), 
+          style = "default", 
+          order = own_order_1, 
+          dep.var.labels ="",
+          notes=c("Standard errors given in parentheses.",
+                  "Population scaled to 1,000,000 and income scaled to 10,000."), 
+          column.labels = c("Presidential", "Midterm", "Constitutional"),
+          covariate.labels = own_labels_1)
+
+
+
+```
+<br> <br>
+<div style="color:blue">
+Findings:
+</div>
+See summary of paper findings in the introduction.
+
+<br> 
+
+<div style="color:blue">
+Creating graphs that allow to assess the parallel trend assumption:
+</div>
+
+Parallel Trend Assumption: The parallel assumption requires that the difference between the counties with vote centers and counties without vote centers is constant over time, in the absence of treatment. 
+
+Data: Rottinghaus_Cortina_Vote Centers and Turnout by Election Type in Texas_Parallel Assumption Data.dta 
+
+Method: <br> 
+* Convert given data to long format by transforming the variables "control" and "treat" into a column that is indicating the status and a column that is containing the turn-out values <br> 
+* Create an additional dummy-column or the status <br> 
+* Filter data for election type (as the parallel trend assumption has to only hold withing different election types) <br>  
+* Visualize data by drawing a plot that shows both the turnout for the treatment and the control group in different colors in one graph
+
+```{r}
+
+# Replicating Parallel Trends Graphs
+
+# Convert data to a long format
+data_turnout_PA_long <- data_turnout_PA_raw %>%      
+  dplyr::select(year, control, treat, Election) %>% # select the columns we are interested in
+  pivot_longer(cols = c(control, treat), names_to = "status", values_to = "turnout") %>% #grab columns, new variable "status", new variable "turnout"
+   dplyr::mutate(votecenter = if_else(status == "treat", 1, 0))  #create dummy for status 
+
+
+#  1: Constitutional 
+data_PA_Const <- data_turnout_PA_long %>%  filter(Election == 1)  #filter for Constitutional Elections 
+
+#visualize Data
+ggplot(data_PA_Const, aes(x = year, y = turnout, color = status)) +  
+  geom_point() + 
+  geom_line() + 
+  expand_limits(y = 0) +  expand_limits(y = 0.65) +  expand_limits(x = 2009) +  expand_limits(x = 2018) +
+  theme_minimal() + 
+  labs(title = "Visual Assessment of the Parallel Trends Assumption",
+       x = "Year", y = "Turnout",
+       color = "County Treatment Status") +
+  scale_colour_discrete(labels = c("Non-vote Center Counties", "Vote Center Counties"))  #change labels of the legend 
+ 
+
+#  2: Midterm
+data_PA_Midterm <- data_turnout_PA_long %>%  filter(Election == 2)  #filter for Constitutional Elections 
+
+#visualize Data
+ggplot(data_PA_Midterm, aes(x = year, y = turnout, color = status)) +  
+  geom_point() + 
+  geom_line() + 
+  expand_limits(y = 0) + expand_limits(y = 0.65) + expand_limits(x = 2009) +  expand_limits(x = 2018) +
+  theme_minimal() + 
+  labs(title = "Visual Assessment of the Parallel Trends Assumption",
+       x = "Year", y = "Turnout",
+       color = "County Treatment Status") +
+  scale_colour_discrete(labels = c("Non-vote Center Counties", "Vote Center Counties"))  #change labels of the legend 
+ 
+
+#  3: Presidential 
+data_PA_Presid <- data_turnout_PA_long %>%  filter(Election == 3)  #filter for Constitutional Elections 
+
+#visualize Data
+ggplot(data_PA_Presid, aes(x = year, y = turnout, color = status)) +  
+  geom_point() + 
+  geom_line() + 
+  expand_limits(y = 0) + expand_limits(y = 0.65) + expand_limits(x = 2009) + expand_limits(x = 2018) +
+  theme_minimal() + 
+  labs(title = "Visual Assessment of the Parallel Trends Assumption",
+       x = "Year", y = "Turnout",
+       color = "County Treatment Status") +
+  scale_colour_discrete(labels = c("Non-vote Center Counties", "Vote Center Counties"))  #change labels of the legend 
+ 
+```
+<br> <br>
+<div style="color:blue">
+Findings: Parallel Trend Assumption
+</div>
+As the three different graphs clearly shows, the parallel trend assumption holds in all three elections cycles. This assupmtion is a requiredment for the Difference-in-difference (DD) fixed effect model to identify the causal effect of interes and produce valid results.
+<br> <br> 
+
+
+<div style="color:blue">
+Exploration of an alternative hypothesis (Part I):
+</div>
+
+Alternative H1: <br> 
+The effect of vote centers on turnout is bigger in counties with a lower median income compared to counties with a higher median income. 
+
+Theoretical rationale: <br> 
+Voting centers aallow more flexibility regarding where and when to cast a ballot. People with fewer financial resources often work in occupations that do not allow them any flexibility in terms of time and travel. In addition, they often have other obligations (i.e. child care, caring for relatives) that cannot be postponed. Therefore, people with fewer financial resources could in average benefit more from the establishment of vote centers. 
+
+Model: <br> 
+Same as the one used for Table 1 in order to obtain comparalbe results (Difference-in-difference (DD) fixed effect model with clustered standard errors at the county level).
+
+Method: <br> 
+* Create a data-subset that only contains the 25% of counties with the lowest median income <br> 
+* Create another data subset that only contains the 25% of counties with the highest median income <br> 
+* Run the same model that we used for Table 1 on the two new data sets, in each case separately for the three different election types <br> 
+* Plot the results of the new data sets next to the results of the original dataset (containing all counties) to compare them
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+#Exploration of an alternative hypothesis: Recreating Table 1 with data-subsets 
+
+summary(data_turnout_raw$median_inc)
+#  Min.    1st Qu.  Median   Mean    3rd Qu.    Max. 
+#  19425   39248     44833   46724   52210     105866 
+
+data_turnout_Bottom25 <- data_turnout_raw  %>% filter(median_inc <= 39248)  #creating bottom 25% median income data-subset
+data_turnout_Top25 <- data_turnout_raw  %>% filter(median_inc >=  52210 )  #creating top 25% median income data-subsets
+
+
+##---------Bottom 25%-----------
+
+
+#Bottom 25 - Presidential: 
+data_turnout_Bottom25_P <- data_turnout_Bottom25  %>%  #filter just for presidential elections and save it as new dataset 
+  filter(presidential == 1) 
+
+data_turnout_Bottom25_P$year <- ifelse(data_turnout_Bottom25_P$year == 2016, 1, 0) #change year column into dummy 
+data_turnout_Bottom25_P<- data_turnout_Bottom25_P %>% dplyr::rename(year_p = year)
+cache_BP  <- lm(turnout ~ votecenter + year_p + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_Bottom25_P)
+
+reg_P_Bottom <- coeftest(cache_BP, vcov=vcovHC(cache_BP, type="HC4", cluster= "group"))  
+
+
+#Bottom 25 - Midterm: 
+data_turnout_Bottom25_M <- data_turnout_Bottom25 %>%      #filter just for midterm elections and save it as new dataset 
+  filter(midterm == 1) %>% 
+  filter(year != 2014)                               #drop all observation from year 2014
+
+data_turnout_Bottom25_M$year <- ifelse(data_turnout_Bottom25_M$year == 2018, 1, 0) #change year column into dummy 
+data_turnout_Bottom25_M <- data_turnout_Bottom25_M %>% dplyr::rename(year_m = year)
+cache_BM  <- lm(turnout ~ votecenter + year_m +  votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_Bottom25_M)
+
+reg_M_Bottom <- coeftest(cache_BM, vcov=vcovHC(cache_BM, type="HC4", cluster= "group"))  
+
+
+## Bottom25 - Column Constitutional: 
+data_turnout_Bottom25_C <- data_turnout_Bottom25  %>% 
+  filter(constitutional == 1) %>% 
+  filter(year==2017 | year==2009) 
+
+data_turnout_Bottom25_C$year <- ifelse(data_turnout_Bottom25_C$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_Bottom25_C<- data_turnout_Bottom25_C %>% dplyr::rename(year_c = year)
+cache_BC  <- lm(turnout ~ votecenter + year_c +  votecenter*year_c + medianinc_rec + county + bachelor_higher + totalpop_rec, data = data_turnout_Bottom25_C)
+
+reg_C_Bottom <- coeftest(cache_BC, vcov=vcovHC(cache_BC, type="HC4", cluster= "group"))  
+
+
+
+##--------Top 25%-----------
+
+
+## Top25 - Column Presidential: 
+data_turnout_Top25_P <- data_turnout_Top25   %>%  #filter just for presidential elections and save it as new dataset 
+  filter(presidential == 1) 
+
+data_turnout_Top25_P$year <- ifelse(data_turnout_Top25_P$year == 2016, 1, 0) #change year column into dummy 
+data_turnout_Top25_P <- data_turnout_Top25_P %>% dplyr::rename(year_p = year)
+cache_TP  <- lm(turnout ~ votecenter + year_p + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_Top25_P)
+
+reg_P_Top <- coeftest(cache_TP, vcov=vcovHC(cache_TP, type="HC4", cluster= "group"))  
+
+
+## Top25 - Column Midterm: 
+data_turnout_Top25_M <- data_turnout_Top25  %>%      #filter just for midterm elections and save it as new dataset 
+  filter(midterm == 1) %>% 
+  filter(year != 2014)                                #drop all observation from year 2014
+
+data_turnout_Top25_M$year <- ifelse(data_turnout_Top25_M$year == 2018, 1, 0) #change year column into dummy 
+data_turnout_Top25_M <- data_turnout_Top25_M %>% dplyr::rename(year_m = year)
+cache_TM  <- lm(turnout ~ votecenter + year_m + votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_Top25_M)
+
+reg_M_Top <- coeftest(cache_TM, vcov=vcovHC(cache_TM, type="HC4", cluster= "group"))  
+
+
+## Top25 - Column Constitutional: 
+data_turnout_Top25_C <- data_turnout_Top25   %>% 
+  filter(constitutional == 1) %>% 
+  filter(year==2017 | year==2009) 
+
+data_turnout_Top25_C$year <- ifelse(data_turnout_Top25_C$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_Top25_C <- data_turnout_Top25_C %>% dplyr::rename(year_c = year)
+cache_TC  <- lm(turnout ~ votecenter + year_c + votecenter*year_c + medianinc_rec + bachelor_higher + totalpop_rec, data = data_turnout_Top25_C)
+
+reg_C_Top <- coeftest(cache_TC, vcov=vcovHC(cache_TC, type="HC4", cluster= "group"))  
+
+
+#Creating a stargazer table that includse all linear models
+stargazer(reg_P_1, reg_P_Bottom,  reg_P_Top, reg_M_1, reg_M_Bottom,  reg_M_Top, reg_C_1, reg_C_Bottom,  reg_C_Top, 
+          title="Table 4. Alternative Hypothesis: Recreating Table 1 with Data Subsets.", 
+          type = "html", 
+          out = "Table_4.html",
+          omit.stat=c("f", "ser"), 
+          style = "default",  
+          order=own_order_1,
+          covariate.labels = own_labels_1, 
+          omit= c("county"),
+          column.labels = c("Presidential <br> All Obs.", "Presidential <br>  Bottom 25%", "Presidential <br> Top 25%",
+                            "Midterm <br> All Obs.", "Midterm <br>  Bottom 25%", "Midterm <br> Top 25%",
+                            "Constitutional <br> All Obs.", "Constitutional <br>  Bottom 25%", "Constitutional <br> Top 25%"),
+          notes=c("Standard errors given in parentheses.", 
+                  "Population scaled to 1,000,000 and income scaled to 10,000."))
+
+
+
+```
+<br> <br>
+<div style="color:blue">
+Report and Interpretation of the Results: Alternative Hypothesis (Part I)
+</div>
+
+As we are fitting a Difference-in-difference (DD) fixed effect model with clustered standard errors at the county level, our main variables of interest (i.e. our main predictors) are in each election type the interaction variables between the vote center dummy and the time dummy: <br>
+ Time(P) * Vote center <br> 
+ Time(M) * Vote center <br> 
+ Time(C) * Vote center <br> 
+  
+Cloumn 1, 4 and 7 contain results based on data from all counties independent of the median income (results from replication of Table 1). <br>
+Cloumn 2, 5 and 8 contain results based on data from the 25% of the counties the lowest median income. <br> 
+Cloumn 3, 6 and 9 contain results based on data from the 25% of the counties the highest median income. <br> 
+
+As we can see, while certain coefficient estimates reach high levels of impact (e.g. top 25%, midterm election: 8.6%), only one coefficient is statistically significant: 
+In the top 25% median income county-group the estblishment of a vote center increases turnout in constitutional election by 4.2% (9th column). The result is statistically significant at the 5% confidence level. While the overall effect for all counties together in a constitutional election yields 5.4% (7th column), the result is not reliable as it is not statistically significant (not even closely, as the standart error is higher than the coefficient estimate). Therefore, it is difficult to interpret the difference at this point, as it is not clear if it relects a true difference in the population is just due to random sampling error.
+
+The missing standard errors in the bottom 25% median income county-group in constitutional election (8th column), indicate that there are not enough treated units in the data subset, and the results should be interpreted with great caution. 
+
+To be able to further interpret the difference between the top 25% median income county-group (9th column) and the group containing all counties (7th column) in the constitutional election, in the next step new matched datasets are created and fit into a difference-in-difference (DD) fixed effect model. 
+
+<br> 
+
+
+
+<div style="color:blue">
+Exploration of an alternative hypothesis (Part II):
+</div>
+
+Alternative H1: <br> 
+The effect of vote centers on turnout is bigger in counties with a lower median income compared to counties with a higher median income. 
+
+Theoretical rationale: <br> 
+In the former analysis of the 25% top and bottom median income counties with unmachted data we only got statitically significant results on the top 25% median income county-group in costitutional elections. To strenghen the results, the same data will be matched using a propensity score matching process and over the matched data a Difference-in-difference (DD) fixed effect model will be fitted. The results are doubly robust results and a higher validity of the findings. 
+
+Model: <br> 
+Same as the one used for Table 3 in order to obtain comparalbe results (Linear Regression Difference-in-difference (DD) fixed effect model with probability weights extracted from the propensity score matching process based on panel data covering presidential elections (2012-2016), midterm/gubernatorial elections (2010-2018), and constitutional elections (2009-2017) in Texas.)
+
+Method: <br> 
+* Create new data subsets for bottom 25% and top 25% median income counties and filter for election type and the respective years <br> 
+* Drop unrelevant variables and omit missing values <br> 
+* Use propensity score matching (matching on votecenter) to create a new, machted dataset: matching method = K-nearest neighbors algorithm; distance measurment = Probit model <br> 
+* Run linear model (DD fixed effect model) on matched data (doubly robust method for causal inference) <br> 
+* Plot the results of the new data sets next to the results of the original dataset (containing all counties) to compare them <br> 
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+#Exploration of an alternative hypothesis: Recreating Table 3 with data-subsets 
+
+##Bottom 25% Median Income Counties - Difference-in-difference (DD) fixed effect model with probability weights extracted from the propensity score matching process
+
+
+# Column 1: Presidential 
+data_turnout_presidential <- data_turnout_Bottom25 %>% filter(presidential == 1)   #filter for presidential elections
+data_turnout_presidential$year <- ifelse(data_turnout_presidential$year == 2016, 1, 0) #change year column into dummy 
+data_turnout_presidential <- data_turnout_presidential %>% dplyr::rename( year_p = year) #rename year column 
+
+match_data1 <- data_turnout_presidential %>%     
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_p) %>% 
+  na.omit()  #omit missing values 
+nearest_match1 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest",  distance =  "probit",
+                       data = match_data1, replace =T)
+data_exact_match1 <- match.data(nearest_match1)  #grab  matched data
+
+reg_Pscore_Presid_Bottom25   <- lm(turnout ~ votecenter + year_p + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match1)
+
+
+# Column 2: Midterm 
+data_turnout_midterm <- data_turnout_Bottom25  %>% filter(midterm == 1) %>% filter(year != 2014)   #filter for midterm elections 
+data_turnout_midterm$year <- ifelse(data_turnout_midterm$year == 2018, 1, 0) #change year column into dummy 
+data_turnout_midterm <- data_turnout_midterm%>% dplyr::rename( year_m = year) #rename year column
+
+match_data2 <- data_turnout_midterm %>% 
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_m) %>% 
+  na.omit()   #omit missing values 
+nearest_match2 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest", distance =  "probit", 
+                       data = match_data2, replace =T)
+data_exact_match2 <- match.data(nearest_match2)  #grab  matched data
+
+reg_Pscore_Midterm_Bottom25   <- lm(turnout ~ votecenter + year_m + votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match2)
+
+
+# Column 3: Constitutional
+data_turnout_const <- data_turnout_Bottom25 %>% filter(constitutional == 1) %>% filter(year==2017 | year==2009) 
+data_turnout_const$year <- ifelse(data_turnout_const$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_const <- data_turnout_const %>% dplyr::rename(year_c = year) #rename year column 
+
+match_data3 <- data_turnout_const %>% 
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_c) %>% 
+  na.omit()    #omit missing values 
+nearest_match3 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest",   distance =  "probit",
+                       data = match_data3, replace =T)
+data_exact_match3 <- match.data(nearest_match3)  #grab matched data
+
+reg_Pscore_Const_Bottom25   <- lm(turnout ~ votecenter + year_c + votecenter*year_c + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match3)
+
+
+
+##Top 25% Median Income Counties - Difference-in-difference (DD) fixed effect model with probability weights extracted from the propensity score matching process
+
+
+# Column 1: Presidential 
+data_turnout_presidential <- data_turnout_Top25 %>% filter(presidential == 1)   #filter for presidential elections
+data_turnout_presidential$year <- ifelse(data_turnout_presidential$year == 2016, 1, 0) #change year column into dummy 
+data_turnout_presidential <- data_turnout_presidential %>% dplyr::rename( year_p = year) #rename year column 
+
+match_data1 <- data_turnout_presidential %>%     
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_p) %>% 
+  na.omit()  #omit missing values 
+nearest_match1 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest",  distance =  "probit",
+                       data = match_data1, replace =T)
+data_exact_match1 <- match.data(nearest_match1)  #grab  matched data
+
+reg_Pscore_Presid_Top25   <- lm(turnout ~ votecenter + year_p + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match1)
+
+
+# Column 2: Midterm 
+data_turnout_midterm <- data_turnout_Top25 %>% filter(midterm == 1) %>% filter(year != 2014)   #filter for midterm elections 
+data_turnout_midterm$year <- ifelse(data_turnout_midterm$year == 2018, 1, 0) #change year column into dummy 
+data_turnout_midterm <- data_turnout_midterm%>% dplyr::rename( year_m = year) #rename year column
+
+match_data2 <- data_turnout_midterm %>% 
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_m) %>% 
+  na.omit()   #omit missing values 
+nearest_match2 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest", distance =  "probit", 
+                       data = match_data2, replace =T)
+data_exact_match2 <- match.data(nearest_match2)  #grab matched data
+
+reg_Pscore_Midterm_Top25   <- lm(turnout ~ votecenter + year_m + votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match2)
+
+
+# Column 3: Constitutional
+data_turnout_const <- data_turnout_Top25 %>% filter(constitutional == 1) %>% filter(year==2017 | year==2009) 
+data_turnout_const$year <- ifelse(data_turnout_const$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_const <- data_turnout_const %>% dplyr::rename(year_c = year) #rename year column 
+
+match_data3 <- data_turnout_const %>% 
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_c) %>% 
+  na.omit()    #omit missing values 
+nearest_match3 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest",   distance =  "probit",
+                       data = match_data3, replace =T)
+data_exact_match3 <- match.data(nearest_match3)  #grab matched data
+
+reg_Pscore_Const_Top25   <- lm(turnout ~ votecenter + year_c + votecenter*year_c + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match3)
+
+
+
+#Creating a stargazer table that includes all linear models
+stargazer(reg_Pscore_Presid,reg_Pscore_Presid_Bottom25, reg_Pscore_Presid_Top25,
+          reg_Pscore_Midterm, reg_Pscore_Midterm_Bottom25 ,reg_Pscore_Midterm_Top25, 
+          reg_Pscore_Const,  reg_Pscore_Const_Bottom25 ,reg_Pscore_Const_Top25, 
+          title="Table 5. Alternative Hypothesis: Recreating Table 3 with Data Subsets .",
+          type = "html", 
+          out = "Table_5.html",
+          omit.stat=c("f", "ser"),
+          style = "default", 
+          order = own_order_1,
+          dep.var.labels ="",
+          model.numbers = FALSE,
+          column.labels = c("Presidential <br> All Obs.", "Presidential <br>  Bottom 25%", "Presidential <br> Top 25%",
+                            "Midterm <br> All Obs.", "Midterm <br>  Bottom 25%", "Midterm <br> Top 25%",
+                            "Constitutional <br> All Obs.", "Constitutional <br>  Bottom 25%", "Constitutional <br> Top 25%"),
+          covariate.labels = own_labels_1)
+
+
+```
+<br> 
+<br>
+
+<div style="color:blue">
+Report and Interpretation of the Results: Alternative Hypothesis (Part II)
+</div>
+
+Again our variables of interest are in each election type the interaction variables between the vote center dummy and the time dummy: <br> 
+Time(P) * Vote center <br> 
+Time(M) * Vote center <br> 
+Time(C) * Vote center <br> 
+
+Cloumn 1, 4 and 7 contain results based on data from all counties independent of the median income (results from replication of Table 3). <br>
+Cloumn 2, 5 and 8 contain results based on data from the 25% of the counties the lowest median income. <br> 
+Cloumn 3, 6 and 9 contain results based on data from the 25% of the counties the highest median income. <br> 
+
+Again the standard errors in the bottom 25% median income county-group in constitutional election (8th column) are missing. As we can see the matched data subsets contains only 6 oberservations, which confirms the assumption that the missung values are probably due to not enough treated units. The data covering presidential and miterm elections also contains very few obersavtion (10 in both cases) for the bottom 25% median income group. This is problematic because the small amout of observations makes it less likley to get statistically significant results can be interpreted properly (due to inflated standard errors). 
+
+Regarding the hypothesis "The effect of vote centers on turnout is bigger in counties with a lower median income compared to counties with a higher median income.": 
+Due to the lack of units (treated untis and therefore also matched units) in the bottom 25% median income counties, we do not have coefficient estimates of our variables of interest in the bottom 25% group that are statistically significant. Therefore it is not possible to have a valid causal interpretation of these estimates and it is also not possible to compare the bottom 25% with the top 25% median income counties. 
+
+The data only allows to compare the result of the whole data set (including all counties) with the top 25% median income group for midterm and constitutional elections: 
+
+As we can see, three of our variables of interest (interaction variables) are statistically significant. In the case of midterm elections, we can see that the effect of vote centers on turnout is higher for the top 25% (6th column) median income group (7.5%) compared to the all-counties (4th column) data set (4.9%). Both results are statistifaclly significant at the 10%  confidence level. 
+
+Constitutional Elections: <br> 
+The coefficient estimate of the effect of vote centers on turnout in the top 25% median income group in constitutional elections (9th column) is again statistically significant but just on at the 10% confidence level (compared to a 5% confidence level in the first model, Table 4). Moreover,the coefficient estimate in higher (6.0%) compared to the model in Talbe 4 (4.2%). While in Table 4 the coefficient estimate of the top 25% is lower (4.2%) compared to the coefficient estimate of the whole data set (5.4%), in the model based on the matched data (Table 5) set the estimate for the top 25% is higher (6.0%) compared to the whole data set (4.1%). In general, one has to be cautious in interpreting these results, but the results based on the matched data set can be considered more reliable (due to the doubly robust method for causal inference). 
+
+Miterm Elections: <br> 
+As the coefficient estimates of the top 25% group and the group containg all counties are both statistically significant on at the 10%  confidence level, the results suggest that the effect of vote centers on election turnout is actually higher in counties with a higher median income (7.5%) compared to the average of all counties (4.9%).
+
+Interpretation: <br> 
+The results could suggest that the higher flexibility of vote centers affect people living in counties with a higher median income more as it increases their turnout above average. This holds only true for constitutional election cycles. Apperently there is a certain low threshold of convience in constitutional elections in higher income counties that the establishment of vote centers exceed. Due to the unsufficient data, it is (based on these results) not possible to make a statement about how the impact of voting centers differs on low median income counties compared to the average of all counties. 
+
+
+<br> 
+
+<div style="color:blue">
+Running Diagnostics for Parallel Trends (I): Placebo Outcomes
+</div>
+
+Theoretical rationale: <br> 
+The variable "bachelor_higher", which is indicating the percentage of people in a county that has a bachelor degree or a higher degree, is in this model used as the outcome variable.
+The underlying assumption is, that the percentage of people in a county having a higher degree is not causualy correlated with the establishment of vote centers. Therefore we should not see a statistically significant effect of our variable of interest (interaction varialbe of vote center dummy and time dummy) on the variable "bachelor_higher" when re-estimating DD on it. It there is an effect, against our expectations, this would suggest that there is something wrong with the model specification or the data is somehow flaved. If that is the case, we should reevalute the findings from the original study or find a convincing explanating for the unusual results.
+
+Model: <br> 
+Same data und model as used for replication Table 1: Difference-in-difference (DD) fixed effect model with clustered standard errors at the county level based on panel data covering presidential elections (2012-2016), midterm/gubernatorial elections (2010-2018), and constitutional elections (2009-2017) in Texas.
+
+Method:  <br> 
+* Filter data for election type and relevant years, change year column name accordingly  <br>
+* Recode year variable into dummy  <br>
+* Run linear model with "bachelor_higher" as outcome variable and "votecenter * year_p" as DD-estimator (including "county" to be ablte to cluster standard errors on a county-level)  <br>
+* Varaible "turnout" should not be included in the regression, as it could induce collider-bias  <br>
+* Using coeftest() to cluster the standart errors on county-level  <br>
+* Print out model out with stargazer  <br>
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+## (I) Placebo outcome: bachelor_higher 
+
+#Column 1: 
+data_turnout_presidential <- data_turnout_raw %>%  #filterfor presidential  elections 
+  filter(presidential == 1)  
+data_turnout_presidential$year <- ifelse(data_turnout_presidential$year == 2016, 1, 0) #change year-column into dummy 
+data_turnout_presidential <- data_turnout_presidential %>% dplyr::rename( year_p = year) #rename year column 
+cache_1  <- lm(bachelor_higher ~ votecenter + year_p + county + votecenter*year_p + medianinc_rec + totalpop_rec, data = data_turnout_presidential)
+
+reg_P_1D <- coeftest(cache_1, vcov=vcovHC(cache_1, type="HC4", cluster= "group"))  
+
+
+#Column 2: Midterm
+data_turnout_midterm <- data_turnout_raw %>%      #filter for midterm elections 
+  filter(midterm == 1) %>% filter(year != 2014)   #drop all observation from year 2014
+data_turnout_midterm$year <- ifelse(data_turnout_midterm$year == 2018, 1, 0) #change year column into dummy 
+data_turnout_midterm <- data_turnout_midterm%>% dplyr::rename( year_m = year) #rename year column 
+cache_2  <- lm(bachelor_higher ~ votecenter + year_m + county + votecenter*year_m + medianinc_rec + totalpop_rec, data = data_turnout_midterm)
+
+reg_M_1D <- coeftest(cache_2, vcov=vcovHC(cache_2, type="HC4", cluster= "group"))  
+
+
+#Column 3: Constitutional 
+data_turnout_const <- data_turnout_raw %>% filter(constitutional == 1) %>% filter(year==2017 | year==2009)  #filter for constitutional elections 
+data_turnout_const$year <- ifelse(data_turnout_const$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_const <- data_turnout_const %>% dplyr::rename(year_c = year) #rename year column
+cache_3  <- lm(bachelor_higher ~ votecenter + year_c + county + votecenter*year_c + medianinc_rec  + totalpop_rec, data = data_turnout_const)
+
+reg_C_1D <- coeftest(cache_3, vcov=vcovHC(cache_3, type="HC4", cluster= "group"))  
+
+
+#Creating a stargazer table that includes all linear models: 
+own_labels_D =  c( "Time(P) (1=2016/0=2012)", "Time(P)*Vote center", "Time(M) (1=2018/0=2010)", "Time(M)*Vote center", "Time(C) (1=2017/0=2009)", "Time(C)*Vote center", "Vote center (1=yes/0=no)", "Median income", "Total population") 
+
+
+stargazer(reg_P_1D, reg_M_1D, reg_C_1D, 
+          title="Table 6. Diagnostic: Placebo Outcome",  
+          type = "html",
+          out = "Table_6.html",
+          model.numbers = FALSE,
+          omit.stat=c("f", "ser"),
+          style = "default", 
+          order=own_order_1, 
+          covariate.labels = own_labels_D, 
+          omit= c("county"), 
+          column.labels = c("Presidential <br> 2012-2016", "Midterm <br> 2010-2018", 
+                            "Constitutional <br> 2009-2017"), 
+          notes=c("Standard errors given in parentheses.", 
+                  "Population scaled to 1,000,000 and income scaled to 10,000."))
+
+
+```
+<br> 
+<br>
+<div style="color:blue">
+Report and Interpretation of the Results: (I) Placebo Outcomes
+</div>
+
+As expected, the coefficient estimates of our variables of interest (interaction variables) are close to zero and not at all statistically significant (expect in the case of midterm elections, but only at the 10% confidence level, so this is very likley a result of random sampling error). The model passed the placebo test and did not wrongly dedect a causual effect of vote centers on the percentage of people having a higher degree. The parallel trends assumption (the assumptions of the model) holds. 
+
+<br> 
+
+
+<div style="color:blue">
+Running Diagnostics for Parallel Trends (II): Placebo Test Using Alternative Outcomes
+</div>
+
+Theoretical rationale:  <br>
+Instead of running the difference-in-difference (DD) fixed effect model with probability weights extracted from the propensity score matching process on the original data set, a new data set is created by droping the treated units and then randomly assign (in the data) a new group of units as treated. If the model is run on the data set containing new placebo treated units we would theoretically not expect to see any statistically significant causual effect. If an effect of placebo vote centers can be observed on the turnout of the counties that in reality did not establish vote centers, there must a problem with either the specificated or the implemented model, or the data in general. In that case the assumptions and results of the original paper must be reevaluated. 
+
+Model:  <br>
+Same data and model as used for replication Table 3: Difference-in-difference (DD) fixed effect model with probability weights extracted from the propensity score matching process based on panel data covering presidential elections (2012-2016), midterm/gubernatorial elections (2010-2018), and constitutional elections (2009-2017) in Texas.
+
+
+Method:   <br>
+* Prepare new data set by deleting all observations that have established a vote center (treated units) <br>
+* Create a new row that is filled with random numbers (1-100), which will use to randomly assign the placebo treatment <br>
+* Mark  all observations that were randomly assigned a number below 35 as treated <br>
+* Filter the new data set for election and the respective years <br>
+* Create new dataset with only relevant variables and omit missing values <br>
+* Use propensity score matching (matching on votecenter) to create new, machted dataset: matching method = K-nearest neighbors algorithm; distance measurment = Probit model <br>
+* Run linear model (DD fixed effect model) on matched data (doubly robust method for causal inference) <br>
+
+```{r, results = 'asis', warning=FALSE, message=FALSE}
+
+## (II) Placebo Test Using Alternative Outcomes
+
+#Preparation
+data_turnout_placebo <- data_turnout_raw %>% filter(votecenter != 1)  #dropping all treated units from the dataset 
+data_turnout_placebo$random_row <- sample(100,  size = 2280, replace = TRUE) #creating a new row with random numbers from 1-100
+data_turnout_placebo$votecenter <- ifelse(data_turnout_placebo$random_row  <= 35 , 1, 0)  #creating new placebo-treated untis based on random numbers 
+
+
+#Reproducting Table 3 with alternative outcomes (placebo test)
+
+
+# Column 1: Presidential 
+data_turnout_presidential <- data_turnout_placebo  %>% filter(presidential == 1)   #filter just for presidential elections  
+data_turnout_presidential$year <- ifelse(data_turnout_presidential$year == 2016, 1, 0) #change year column into dummy 
+data_turnout_presidential <- data_turnout_presidential %>% dplyr::rename( year_p = year) #rename year column 
+
+match_data1 <- data_turnout_presidential %>%    #omit missing values
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_p) %>% 
+  na.omit()
+nearest_match1 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,   #perform nearest match
+                       method = "nearest",  distance =  "probit",
+                       data = match_data1, replace =T)
+data_exact_match1 <- match.data(nearest_match1)  #grab the matched data
+
+reg_Pscore_Presid_placebo   <- lm(turnout ~ votecenter + year_p + votecenter*year_p + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match1)
+
+
+# Column 2: Midterm 
+data_turnout_midterm <- data_turnout_placebo  %>% filter(midterm == 1) %>% filter(year != 2014)   #filter just for midterm elections 
+data_turnout_midterm$year <- ifelse(data_turnout_midterm$year == 2018, 1, 0) #change year column into dummy 
+data_turnout_midterm <- data_turnout_midterm%>% dplyr::rename( year_m = year) #rename year column
+
+match_data2 <- data_turnout_midterm %>%   #omit missing values
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_m) %>% 
+  na.omit()
+nearest_match2 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec,  # perform nearest match
+                       method = "nearest", distance =  "probit", 
+                       data = match_data2, replace =T)
+data_exact_match2 <- match.data(nearest_match2)  #grab the matched data
+
+reg_Pscore_Midterm_placebo   <- lm(turnout ~ votecenter + year_m + votecenter*year_m + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match2)
+
+
+# Column 3: Constitutional
+data_turnout_const <- data_turnout_placebo  %>% filter(constitutional == 1) %>% filter(year==2017 | year==2009) 
+data_turnout_const$year <- ifelse(data_turnout_const$year == 2017, 1, 0) #change year column into dummy 
+data_turnout_const <- data_turnout_const %>% dplyr::rename(year_c = year) #rename year column
+
+match_data3 <- data_turnout_const %>%  #omit missing values
+  dplyr::select(votecenter, turnout, bachelor_higher,  medianinc_rec,  totalpop_rec, year_c) %>% 
+  na.omit()
+nearest_match3 <- matchit(votecenter ~ bachelor_higher + medianinc_rec + totalpop_rec, # perform nearest match
+                       method = "nearest",   distance =  "probit",
+                       data = match_data3, replace =T)
+data_exact_match3 <- match.data(nearest_match3) #grab the matched data
+
+reg_Pscore_Const_placebo   <- lm(turnout ~ votecenter + year_c + votecenter*year_c + medianinc_rec + bachelor_higher + totalpop_rec, data = data_exact_match3)
+
+
+
+#Creating a stargazer table that includse all linear models
+stargazer(reg_Pscore_Presid_placebo, reg_Pscore_Midterm_placebo, reg_Pscore_Const_placebo, 
+          title="Table 7. Placebo Treatment Group Test.", 
+          type = "html", 
+          out = "Table_7.html",
+          model.numbers = FALSE,
+          omit.stat=c("f", "ser"), 
+          style = "default", 
+          order=own_order_1, 
+          dep.var.labels ="",
+          column.labels = c("Presidential", "Midterm", "Constitutional"),
+          covariate.labels = own_labels_1)
+
+
+
+```
+<br>
+<br>
+<div style="color:blue">
+Report and Interpretation of the Results: (II) Placebo Test Using Alternative Outcomes
+</div>
+
+As expected, the coefficient estimates of our variables of interest (interaction variables) are close to zero and not at all statistically significant. The model passed the placebo test and did not wrongly dedect a causual effect of vote centers on turnout in counties that never established a vote center. The parallel trends assumption (the assumptions of the model) holds. 
+
+<br> 
+
+### 6. References
+
+Cortina, Jeronimo B. & Brandon Rottinghaus (2019). Vote Centers and turnout by election type in Texas. *Research & Politics* https://doi.org/10.1177/2053168019864224
+
+<br> 
+
